@@ -84,19 +84,24 @@ def read_string(sock):
     return varuint(size) + read_exact(sock, size)
 
 
+def expect(value, expected):
+    if value != expected:
+        raise ValueError(f"Unexpected native field: {value!r}, expected {expected!r}")
+
+
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         client = self.request
         with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10) as server:
             major_version, minor_version = self.server.application_version
-            assert read_varuint(client) == 0  # Client Hello.
+            expect(read_varuint(client), 0)  # Client Hello.
             name = read_string(client)
             for _ in range(3):
                 read_varuint(client)  # Original major, minor, revision.
             server.sendall(b"\x00" + name + varuint(major_version) + varuint(minor_version) + varuint(54460)
                            + b"".join(read_string(client) for _ in range(3)))
 
-            assert read_varuint(server) == 0  # Server Hello.
+            expect(read_varuint(server), 0)  # Server Hello.
             name = read_string(server)
             major, minor = read_varuint(server), read_varuint(server)
             read_varuint(server)  # Advertise the negotiated revision to the client.
@@ -108,16 +113,16 @@ class Handler(socketserver.BaseRequestHandler):
             packet = read_varuint(client)
             while packet == 4:  # Client Ping can precede the first query.
                 server.sendall(varuint(packet))
-                assert read_varuint(server) == 4  # Server Pong.
+                expect(read_varuint(server), 4)  # Server Pong.
                 client.sendall(varuint(4))
                 packet = read_varuint(client)
-            assert packet == 1  # Query.
+            expect(packet, 1)  # Query.
             header = b"\x01" + read_string(client)
-            assert read_exact(client, 1) == b"\x01"  # Initial query from clickhouse-client.
+            expect(read_exact(client, 1), b"\x01")  # Initial query from clickhouse-client.
             header += bytes([self.server.query_kind])
             header += b"".join(read_string(client) for _ in range(3))
             header += read_exact(client, 8)  # Initial-query start time.
-            assert read_exact(client, 1) == b"\x01"  # TCP interface.
+            expect(read_exact(client, 1), b"\x01")  # TCP interface.
             header += b"\x01" + b"".join(read_string(client) for _ in range(3))
             for _ in range(3):
                 read_varuint(client)
